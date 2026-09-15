@@ -57,13 +57,31 @@ func TestStreamHeartbeat(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	go s.Heartbeat(ctx, 30*time.Millisecond)
+	defer cancel()
+
+	// 必须用 channel 明确等待心跳 goroutine 退出，而不是靠 Sleep 去猜：
+	// 1) cancel 只关闭 ctx.Done，下一次循环的 select 仍可能先命中 ticker 再写一次；
+	// 2) Go 内存模型不保证 Sleep 与另一个 goroutine 之间存在 happens-before，
+	//    于是主 goroutine 读 Body 会和心跳写 Body 并发，被 race detector 判为数据竞争。
+	// <-done 同时充当一条契约断言：Heartbeat 必须在 ctx 取消后退出。
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		s.Heartbeat(ctx, 30*time.Millisecond)
+	}()
+
 	time.Sleep(90 * time.Millisecond)
 	cancel()
-	time.Sleep(30 * time.Millisecond) // 等心跳 goroutine 退出
 
-	if !strings.Contains(w.Body.String(), ": ping") {
-		t.Errorf("心跳帧缺失；body=%q", w.Body.String())
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("ctx 取消后心跳 goroutine 未在 2s 内退出")
+	}
+
+	body := w.Body.String()
+	if !strings.Contains(body, ": ping") {
+		t.Errorf("心跳帧缺失；body=%q", body)
 	}
 }
 
