@@ -23,12 +23,15 @@ jobs:
       run:
         working-directory: server
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version: '1.24'
           check-latest: true
+          # 本项目零第三方依赖（不生成 go.sum），默认的模块缓存会因找不到 key 文件
+          # 每次都报 "Restore cache failed"，白白产生一条黄色告警。
+          cache: false
       - name: Download modules
         run: go mod download
       - name: Vet
