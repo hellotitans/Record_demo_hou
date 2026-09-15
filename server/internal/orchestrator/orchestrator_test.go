@@ -34,6 +34,54 @@ func newMock() *llm.MockClient {
 	}}
 }
 
+// chineseSideMock 模拟真实模型的"不守规矩"：提示词示例写的是 "data"，
+// 但整场辩论发言标签都是中文，模型照抄成 "数据派"。
+func chineseSideMock() *llm.MockClient {
+	return &llm.MockClient{Handler: func(req llm.Request) string {
+		um := lastUserMsg(req.Messages)
+		switch {
+		case strings.Contains(um, "你需要为一场决策辩论分配角色"):
+			return `{"data":{"option_id":"a","reason":"r"},"life":{"option_id":"b","reason":"r"}}`
+		case strings.Contains(um, "你是这场辩论的主持人"):
+			return `{"unresolved":["x"],"repeated":[]}`
+		case strings.Contains(um, "提取双方各自暴露的关键假设"):
+			return `[{"side":"数据派","statement":"房价年涨幅不低于3%","variable":"房价年涨幅","operator":">=","value":3,"unit":"%"},` +
+				`{"side":"生活派","statement":"通勤时间不超过1小时","variable":"通勤时间","operator":"<=","value":1,"unit":"小时"},` +
+				`{"side":"路人甲","statement":"这条应被丢弃","variable":"x","operator":">","value":1,"unit":"次"}]`
+		default:
+			return "发言内容"
+		}
+	}}
+}
+
+// TestAssumptionsAcceptChineseSide 锁定真实联调暴露的缺陷：
+// 模型输出中文角色名时不能被静默丢弃，否则前端临界点计算器会是空的。
+func TestAssumptionsAcceptChineseSide(t *testing.T) {
+	o, err := New(chineseSideMock(), Config{Router: llm.Router{Cheap: "c", Strong: "s"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := o.Run(context.Background(), sampleDilemma(), func(debate.Frame) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 中文标签应被归一化并保留；无法识别的角色仍然丢弃。
+	if len(result.Assumptions) != 2 {
+		t.Fatalf("假设数=%d, 期望 2（'路人甲' 应被丢弃）", len(result.Assumptions))
+	}
+	if result.Assumptions[0].Side != debate.SideData {
+		t.Errorf("第1条 Side=%q, 期望 data", result.Assumptions[0].Side)
+	}
+	if result.Assumptions[1].Side != debate.SideLife {
+		t.Errorf("第2条 Side=%q, 期望 life", result.Assumptions[1].Side)
+	}
+	// 编号必须连续：丢弃中间项后不能留下空洞。
+	if result.Assumptions[0].ID != "asm-1" || result.Assumptions[1].ID != "asm-2" {
+		t.Errorf("编号=%q,%q, 期望 asm-1,asm-2", result.Assumptions[0].ID, result.Assumptions[1].ID)
+	}
+}
+
 func lastUserMsg(msgs []llm.Message) string {
 	for i := len(msgs) - 1; i >= 0; i-- {
 		if msgs[i].Role == llm.RoleUser {

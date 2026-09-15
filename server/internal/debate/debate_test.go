@@ -124,3 +124,38 @@ func TestUsageAndResultJSONShape(t *testing.T) {
 		t.Errorf("Operator = %q", r.Assumptions[0].Operator)
 	}
 }
+
+func TestParseSide(t *testing.T) {
+	cases := []struct {
+		in   string
+		want Side
+		ok   bool
+	}{
+		{"data", SideData, true},
+		{"life", SideLife, true},
+		{"DATA", SideData, true},
+		{" data ", SideData, true},
+		{"数据派", SideData, true},
+		{"生活派", SideLife, true},
+		{"数据", SideData, true},
+		{"生活", SideLife, true},
+		{"路人甲", "", false},
+		{"", "", false},
+		{"a", "", false},
+	}
+	for _, c := range cases {
+		got, ok := ParseSide(c.in)
+		if ok != c.ok || got != c.want {
+			t.Errorf("ParseSide(%q) = (%q,%v), 期望 (%q,%v)", c.in, got, ok, c.want, c.ok)
+		}
+	}
+}
+
+func TestParseSideRoundTrip(t *testing.T) {
+	for _, s := range []Side{SideData, SideLife} {
+		got, ok := ParseSide(s.DisplayName())
+		if !ok || got != s {
+			t.Errorf("ParseSide(%q.DisplayName()) = (%q,%v)，应还原为 %q", s, got, ok, s)
+		}
+	}
+}

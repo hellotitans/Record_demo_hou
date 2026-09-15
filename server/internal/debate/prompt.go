@@ -225,6 +225,7 @@ func BuildAssumptionPrompt(d Dilemma, closing []Turn) string {
 ]
 
 规则：
+- side 只能填 "data"（数据派）或 "life"（生活派）这两个英文取值，不要写中文。
 - operator 只能是 ">="、"<="、">"、"<"。
 - value 用数字，unit 用 "元"、"%"、"年"、"次" 等。
 - 每方最多取一条最关键的假设。

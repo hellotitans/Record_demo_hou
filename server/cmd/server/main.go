@@ -37,6 +37,9 @@ func main() {
 	baseURL := env("OPENAI_BASE_URL", "https://api.openai.com/v1")
 	cheap := env("MODEL_CHEAP", "mock-cheap")
 	strong := env("MODEL_STRONG", "mock-strong")
+	// 思考型模型必须显式禁用推理输出，否则正文会写进 reasoning_content，
+	// 本服务只读 content，结果是整场辩论拿到空响应。默认禁用正是为此。
+	thinking := env("LLM_THINKING", "disabled")
 	telemetryPath := env("TELEMETRY_FILE", "telemetry.jsonl")
 	decisionsPath := env("DECISIONS_FILE", "decisions.json")
 	heartbeat := 15 * time.Second
@@ -47,8 +50,10 @@ func main() {
 		log.Println("[server] 未配置 OPENAI_API_KEY，使用 Mock 模型（不联网、不花钱）")
 		client = llm.NewMockClient()
 	} else {
-		log.Println("[server] 使用 OpenAI 兼容模型")
-		client = llm.NewOpenAIClient(baseURL, apiKey)
+		log.Printf("[server] 使用 OpenAI 兼容模型（%s，thinking=%q）", baseURL, thinking)
+		oc := llm.NewOpenAIClient(baseURL, apiKey)
+		oc.Thinking = thinking
+		client = oc
 	}
 
 	orch, err := orchestrator.New(client, orchestrator.Config{

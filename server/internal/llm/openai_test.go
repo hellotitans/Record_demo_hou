@@ -156,3 +156,38 @@ func TestOpenAIJSONModeRequest(t *testing.T) {
 		t.Errorf("JSONMode 请求体未包含 response_format=json_object：%s", gotBody)
 	}
 }
+
+// TestOpenAIThinkingField 验证思考模式开关的两个方向。
+//
+// 这条测试守住的是联调阶段最容易踩的坑：思考型模型默认把正文写进
+// reasoning_content 而 content 为 null，本服务只读 content，
+// 一旦开关没带上，整场辩论会静默地拿到空响应。
+func TestOpenAIThinkingField(t *testing.T) {
+	run := func(thinking string) string {
+		var gotBody string
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			b, _ := io.ReadAll(r.Body)
+			gotBody = string(b)
+			w.Header().Set("Content-Type", "text/event-stream")
+			fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"x\"}}]}\n\n")
+			fmt.Fprint(w, "data: [DONE]\n\n")
+		}))
+		defer srv.Close()
+
+		c := &OpenAIClient{BaseURL: srv.URL, Thinking: thinking}
+		if _, err := c.Stream(context.Background(), Request{Model: "m"}, nil); err != nil {
+			t.Fatal(err)
+		}
+		return gotBody
+	}
+
+	// 禁用：必须显式带上，否则模型会走思考模式。
+	if body := run("disabled"); !strings.Contains(body, `"thinking":{"type":"disabled"}`) {
+		t.Errorf("Thinking=disabled 时请求体应带 thinking 字段，实际：%s", body)
+	}
+
+	// 未设置：不应发送该字段，以免不支持此参数的接口报 400。
+	if body := run(""); strings.Contains(body, "thinking") {
+		t.Errorf("Thinking 为空时不应发送 thinking 字段，实际：%s", body)
+	}
+}

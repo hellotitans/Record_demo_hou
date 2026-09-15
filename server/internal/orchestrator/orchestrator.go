@@ -452,14 +452,19 @@ func (o *Orchestrator) extractAssumptions(
 	}
 
 	out := make([]debate.Assumption, 0, len(raw))
-	for i, a := range raw {
+	for _, a := range raw {
 		if strings.TrimSpace(a.Statement) == "" {
 			continue
 		}
-		a.ID = fmt.Sprintf("asm-%d", i+1)
-		if a.Side != debate.SideData && a.Side != debate.SideLife {
+		// 模型不一定按示例输出 "data"/"life"，常照抄发言里的中文标签。
+		// 这里归一化，而不是直接丢弃 —— 静默丢掉假设会让前端的临界点计算器
+		// 空着，用户无从得知发生过什么。
+		side, ok := debate.ParseSide(string(a.Side))
+		if !ok {
 			continue
 		}
+		a.Side = side
+		a.ID = fmt.Sprintf("asm-%d", len(out)+1)
 		out = append(out, a)
 		_ = emit(debate.Frame{Kind: debate.FrameAssumption, Data: a})
 	}

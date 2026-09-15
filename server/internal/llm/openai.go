@@ -21,6 +21,15 @@ type OpenAIClient struct {
 	BaseURL    string // 例如 "https://api.openai.com/v1"
 	APIKey     string
 	HTTPClient *http.Client
+
+	// Thinking 控制思考型模型的推理输出，取值 "disabled" / "enabled" / ""。
+	//
+	// 空串表示不发送该字段（兼容不支持此参数的 OpenAI 官方接口）。
+	// 为什么必须有这个开关：思考型模型（DeepSeek 等）默认把正文写进
+	// delta.reasoning_content 而 delta.content 全程为 null，readSSE 只读 content，
+	// 结果就是整场辩论拿到空响应。显式禁用后正文回到 content，
+	// 且实测 token 消耗下降约一个数量级（300 → 11）。
+	Thinking string
 }
 
 // NewOpenAIClient 创建一个带默认超时的客户端。
@@ -37,12 +46,18 @@ func NewOpenAIClient(baseURL, apiKey string) *OpenAIClient {
 	}
 }
 
+// thinkingMode 是各家思考型模型的推理开关，字段名为各家通用约定。
+type thinkingMode struct {
+	Type string `json:"type"`
+}
+
 type chatRequest struct {
-	Model         string    `json:"model"`
-	Messages      []Message `json:"messages"`
-	Temperature   *float64  `json:"temperature,omitempty"`
-	MaxTokens     int       `json:"max_tokens,omitempty"`
-	Stream        bool      `json:"stream"`
+	Model         string        `json:"model"`
+	Messages      []Message     `json:"messages"`
+	Thinking      *thinkingMode `json:"thinking,omitempty"`
+	Temperature   *float64      `json:"temperature,omitempty"`
+	MaxTokens     int           `json:"max_tokens,omitempty"`
+	Stream        bool          `json:"stream"`
 	StreamOptions *struct {
 		IncludeUsage bool `json:"include_usage"`
 	} `json:"stream_options,omitempty"`
@@ -73,6 +88,9 @@ func (c *OpenAIClient) Stream(ctx context.Context, req Request, onDelta StreamFu
 		Model:    req.Model,
 		Messages: req.Messages,
 		Stream:   true,
+	}
+	if c.Thinking != "" {
+		body.Thinking = &thinkingMode{Type: c.Thinking}
 	}
 	if req.Temperature != nil {
 		body.Temperature = req.Temperature

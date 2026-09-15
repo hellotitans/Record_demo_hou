@@ -34,6 +34,26 @@ func (s Side) DisplayName() string {
 	}
 }
 
+// ParseSide 把模型输出的角色标识归一化为 Side，无法识别时返回 false。
+//
+// 为什么需要它（真实联调的教训，不是理论假设）：
+// 提示词里给的示例是 "data"，但整场辩论的发言标签都是中文的"数据派/生活派"，
+// 模型在真实环境下会照抄它看到的中文标签。如果直接拿 Side 去和 SideData/SideLife
+// 比较，这些假设会被**静默丢弃**——不报错、不埋点，用户只看到空的临界点计算器。
+//
+// 与其指望模型永远守规矩，不如在入口处容错：约定由代码兜住，提示词只做提示。
+func ParseSide(s string) (Side, bool) {
+	v := strings.ToLower(strings.TrimSpace(s))
+	v = strings.TrimSuffix(v, "派")
+	switch v {
+	case "data", "数据", "d":
+		return SideData, true
+	case "life", "生活", "l":
+		return SideLife, true
+	}
+	return "", false
+}
+
 // Opponent 返回对手。
 func (s Side) Opponent() Side {
 	if s == SideData {
