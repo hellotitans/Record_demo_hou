@@ -1,0 +1,39 @@
+name: race
+
+# 竞态检测器门禁：在 Linux runner 上跑 `go test -race ./...`。
+# 本机（Windows 沙箱）无 C 编译器且所有 gcc 二进制源被网络代理封禁，无法本地跑 -race；
+# 因此把竞态检测放到 CI，保证可复现、不污染本地环境。
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - 'server/**'
+      - '.github/workflows/race.yml'
+  pull_request:
+    branches: [main, master]
+    paths:
+      - 'server/**'
+      - '.github/workflows/race.yml'
+  workflow_dispatch:
+
+jobs:
+  race:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          check-latest: true
+      - name: Download modules
+        run: go mod download
+      - name: Vet
+        run: go vet ./...
+      - name: Race detector test
+        run: go test -race -count=1 ./...
+      - name: Coverage (race build)
+        run: go test -race -count=1 -coverprofile=coverage.out ./...

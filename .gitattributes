@@ -1,0 +1,9 @@
+# 仓库内统一存 LF：Windows 默认会把 LF 转成 CRLF，
+# 与 macOS/Linux 协作者混用时会产生整文件级的 diff 噪音。
+* text=auto eol=lf
+
+# 二进制文件不做换行转换
+*.png binary
+*.jpg binary
+*.ico binary
+*.exe binary

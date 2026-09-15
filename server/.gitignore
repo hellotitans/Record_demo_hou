@@ -1,0 +1,11 @@
+# 构建产物
+/bin/
+
+# 运行时产生的埋点落盘与日志
+*.jsonl
+server.log
+sse_out.txt
+
+# Go 缓存（本地）
+/gopath/
+/gocache/
