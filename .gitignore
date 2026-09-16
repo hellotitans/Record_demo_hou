@@ -31,6 +31,9 @@ server/smoke-*.jsonl
 *.key
 *.pem
 secrets.*
+# 本地启动脚本的密钥文件（start-real.sh 从这里读取 Key）
+key.env
+!key.env.example
 
 # ── 编辑器与系统 ──────────────────────────────────────
 .vscode/
