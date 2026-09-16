@@ -336,3 +336,48 @@ func TestRunStopsOnDownstreamDisconnect(t *testing.T) {
 		t.Errorf("下游断开后模型调用数=%d, 期望明显少于 13（仍在为没人看的辩论烧 token）", got)
 	}
 }
+
+// percentMock 模拟真实联调中模型的不当转换：原文是"A 的概率低于 B 的概率"
+// 这类两个量的比较，被硬拆成单变量阈值后变成"概率 < 0%"，
+// 同时再放一条 ">120%" 的越界概率作为对照。
+func percentMock() *llm.MockClient {
+	return &llm.MockClient{Handler: func(req llm.Request) string {
+		um := lastUserMsg(req.Messages)
+		switch {
+		case strings.Contains(um, "你需要为一场决策辩论分配角色"):
+			return `{"data":{"option_id":"a","reason":"r"},"life":{"option_id":"b","reason":"r"}}`
+		case strings.Contains(um, "你是这场辩论的主持人"):
+			return `{"unresolved":["x"],"repeated":[]}`
+		case strings.Contains(um, "提取双方各自暴露的关键假设"):
+			return `[{"side":"life","statement":"大厂被动离职概率低于创业公司倒闭概率","variable":"大厂被动离职概率","operator":"<","value":0,"unit":"%"},` +
+				`{"side":"data","statement":"B轮融资概率不低于35%","variable":"B轮融资概率","operator":">=","value":35,"unit":"%"},` +
+				`{"side":"data","statement":"成功率大于120%","variable":"成功率","operator":">","value":120,"unit":"%"}]`
+		default:
+			return "发言内容"
+		}
+	}}
+}
+
+// TestAssumptionsRejectImpossiblePercent 锁定真实联调暴露的缺陷：
+// 概率小于 0% 或大于 100% 的假设恒不成立/恒成立，进了临界点计算器只会误导用户。
+func TestAssumptionsRejectImpossiblePercent(t *testing.T) {
+	o, err := New(percentMock(), Config{Router: llm.Router{Cheap: "c", Strong: "s"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := o.Run(context.Background(), sampleDilemma(), func(debate.Frame) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(result.Assumptions) != 1 {
+		t.Fatalf("假设数=%d, 期望 1（0%% 与 120%% 两条越界都应被丢弃）", len(result.Assumptions))
+	}
+	if got := result.Assumptions[0].Value; got != 35 {
+		t.Errorf("保留的假设 value=%v, 期望 35", got)
+	}
+	// 保留项的编号仍须连续，不能因为丢弃了前一条就变成 asm-2。
+	if result.Assumptions[0].ID != "asm-1" {
+		t.Errorf("编号=%q, 期望 asm-1", result.Assumptions[0].ID)
+	}
+}

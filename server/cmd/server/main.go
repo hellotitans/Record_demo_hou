@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -29,6 +30,21 @@ func env(key, def string) string {
 		return v
 	}
 	return def
+}
+
+// envFloat 解析浮点环境变量。留空或非法值都返回 def，
+// 配置错误不该让服务起不来 —— 退回默认值并继续。
+func envFloat(key string, def float64) float64 {
+	v := os.Getenv(key)
+	if v == "" {
+		return def
+	}
+	f, err := strconv.ParseFloat(v, 64)
+	if err != nil {
+		log.Printf("[server] %s=%q 不是合法数字，忽略并使用 %v", key, v, def)
+		return def
+	}
+	return f
 }
 
 func main() {
@@ -59,6 +75,11 @@ func main() {
 	orch, err := orchestrator.New(client, orchestrator.Config{
 		Router:      llm.Router{Cheap: cheap, Strong: strong},
 		TurnTimeout: 90 * time.Second,
+		// 定价随模型变，走环境变量而不是硬编码。留空则用包内的 DeepSeek 口径默认值。
+		DefaultPrice: orchestrator.Price{
+			PromptPerK:     envFloat("PRICE_PROMPT_PER_K", 0),
+			CompletionPerK: envFloat("PRICE_COMPLETION_PER_K", 0),
+		},
 	})
 	if err != nil {
 		log.Fatalf("[server] 创建编排器失败: %v", err)

@@ -45,8 +45,12 @@ type Config struct {
 
 func (c Config) withDefaults() Config {
 	if c.DefaultPrice == (Price{}) {
-		// 占位估值，务必用 Layer 4 的真实成本埋点校准 —— 定价和模型选型都依赖它。
-		c.DefaultPrice = Price{PromptPerK: 0.004, CompletionPerK: 0.012}
+		// 2026-09 用真实账单校准过：原先按 OpenAI 量级取 0.004/0.012，
+		// 实测一场辩论约 ¥0.03，估算却是 ¥0.10 —— 高估 3 倍多，会让人误判能不能放量。
+		// 现按 DeepSeek 官方标价口径（输入 2 元/百万、输出 8 元/百万）取值：
+		// 这是不含缓存折扣的最坏情况，实际只会更低，宁可高估不要低估。
+		// 换模型时用 PRICE_PROMPT_PER_K / PRICE_COMPLETION_PER_K 覆盖。
+		c.DefaultPrice = Price{PromptPerK: 0.002, CompletionPerK: 0.008}
 	}
 	if c.TurnTimeout <= 0 {
 		c.TurnTimeout = 90 * time.Second
@@ -296,13 +300,15 @@ func (o *Orchestrator) runTurn(
 	model := o.cfg.Router.Model(tier)
 
 	temp := o.cfg.Temperature
+	sysPrompt := debate.SystemPrompt(side, self, asg.Reason)
+	userPrompt := debate.BuildTurnPrompt(r, side, turnCtx)
 	req := llm.Request{
 		Model:       model,
 		Temperature: &temp,
 		MaxTokens:   o.cfg.MaxTurnTokens,
 		Messages: []llm.Message{
-			{Role: llm.RoleSystem, Content: debate.SystemPrompt(side, self, asg.Reason)},
-			{Role: llm.RoleUser, Content: debate.BuildTurnPrompt(r, side, turnCtx)},
+			{Role: llm.RoleSystem, Content: sysPrompt},
+			{Role: llm.RoleUser, Content: userPrompt},
 		},
 	}
 
@@ -463,6 +469,12 @@ func (o *Orchestrator) extractAssumptions(
 		if !ok {
 			continue
 		}
+		// 概率不可能小于 0 或大于 100。真实联调中模型把"A 的概率低于 B 的概率"
+		// 硬拆成了"概率 < 0%" —— 这种条件要么恒不成立要么恒成立，
+		// 进了临界点计算器只会给出误导性的结论，宁可丢掉。
+		if isPercent(a.Unit) && (a.Value <= 0 || a.Value > 100) {
+			continue
+		}
 		a.Side = side
 		a.ID = fmt.Sprintf("asm-%d", len(out)+1)
 		out = append(out, a)
@@ -593,6 +605,12 @@ func addUsage(a, b debate.Usage) debate.Usage {
 		TotalLatencyMs:   a.TotalLatencyMs + b.TotalLatencyMs,
 		EstimatedCostCNY: a.EstimatedCostCNY + b.EstimatedCostCNY,
 	}
+}
+
+// isPercent 判断单位是否为百分比。中英文写法都认 —— 模型不保证按示例输出。
+func isPercent(unit string) bool {
+	u := strings.TrimSpace(unit)
+	return u == "%" || u == "％" || u == "百分比" || strings.EqualFold(u, "percent")
 }
 
 func lastTurnOf(history []debate.Turn, side debate.Side) string {

@@ -102,11 +102,12 @@ func (c *OpenAIClient) Stream(ctx context.Context, req Request, onDelta StreamFu
 		body.ResponseFormat = &struct {
 			Type string `json:"type"`
 		}{Type: "json_object"}
-		// JSON 模式下必须要求 usage，否则拿不到 token 消耗，成本埋点会缺数据。
-		body.StreamOptions = &struct {
-			IncludeUsage bool `json:"include_usage"`
-		}{IncludeUsage: true}
 	}
+	// usage 一律显式要求。流式下不请求 usage 就拿不到 token 消耗，
+	// 成本埋点会静默缺数据 —— 依赖服务端默认行为等于把可观测性交给运气。
+	body.StreamOptions = &struct {
+		IncludeUsage bool `json:"include_usage"`
+	}{IncludeUsage: true}
 
 	payload, err := json.Marshal(body)
 	if err != nil {
