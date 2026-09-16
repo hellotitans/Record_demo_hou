@@ -2,6 +2,11 @@
 # 与 macOS/Linux 协作者混用时会产生整文件级的 diff 噪音。
 * text=auto eol=lf
 
+# Windows 批处理必须用 CRLF 检出，否则 cmd.exe 会解析错乱
+# （for /f、goto :label、括号块会出现「不是内部或外部命令」的假报错）。
+# 这一条必须放在 * 之后才能覆盖它。
+*.bat text eol=crlf
+
 # 二进制文件不做换行转换
 *.png binary
 *.jpg binary

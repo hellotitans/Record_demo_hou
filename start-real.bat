@@ -1,15 +1,22 @@
 @echo off
-chcp 65001 >nul
-setlocal EnableDelayedExpansion
+chcp 65001 >nul 2>&1
+setlocal EnableExtensions EnableDelayedExpansion
 
-REM ══════════════════════════════════════════════════════════
-REM  一键启动「决策辩论产品」—— 真实 LLM 模式（会调用 API，产生费用）
+REM ==========================================================
+REM  Decision Debate - one-click launcher (REAL LLM mode)
+REM  Calls the DeepSeek API. Costs about CNY 0.05 per debate.
 REM
-REM  前提：key.env 里已填好 OPENAI_API_KEY
-REM  用法：直接双击本文件（不要用 bash 跑，会走 WSL 认不出 C:/ 路径）
+REM  PREREQUISITE: key.env must contain your OPENAI_API_KEY.
 REM
-REM  费用参考：一场完整辩论（四轮 8 段发言）约 ¥0.03~0.05
-REM ══════════════════════════════════════════════════════════
+REM  USAGE: Double-click this file.
+REM  DO NOT run it via bash (bash goes to WSL and cannot read C:/ paths).
+REM
+REM  IMPORTANT (do not "fix" this file casually):
+REM  All comments below are ASCII English on purpose. This file is UTF-8;
+REM  cmd.exe parses .bat with the system code page (GBK here), so multi-byte
+REM  UTF-8 in comments gets mangled and the leftovers run as commands.
+REM  Keep comments ASCII-only and keep echo output ASCII-only too.
+REM ==========================================================
 
 set "ROOT=%~dp0"
 if "%ROOT:~-1%"=="\" set "ROOT=%ROOT:~0,-1%"
@@ -29,99 +36,105 @@ set "KEYFILE=%ROOT%\key.env"
 
 echo.
 echo ========================================
-echo   决策辩论产品 - 启动（真实 LLM 模式）
+echo   Decision Debate - starting (REAL LLM)
 echo ========================================
 echo.
 
-REM --- 前置检查 ---
+REM --- sanity checks ---
 if not exist "%GO%" (
-    echo [错误] 找不到 go.exe：
-    echo        %GO%
+    echo [ERROR] go.exe not found at:
+    echo         %GO%
     echo.
     pause
     exit /b 1
 )
 if not exist "%ROOT%\server\go.mod" (
-    echo [错误] 找不到 server\go.mod，请确认本文件放在项目根目录。
+    echo [ERROR] server\go.mod not found. Put this file in the project root.
     echo.
     pause
     exit /b 1
 )
 if not exist "%ROOT%\web\package.json" (
-    echo [错误] 找不到 web\package.json，请确认本文件放在项目根目录。
+    echo [ERROR] web\package.json not found. Put this file in the project root.
     echo.
     pause
     exit /b 1
 )
 if not exist "%KEYFILE%" (
-    echo [错误] 找不到 key.env
+    echo [ERROR] key.env not found at:
+    echo         %KEYFILE%
     echo.
-    echo        请在本文件同目录新建 key.env，内容一行：
-    echo            OPENAI_API_KEY="sk-你的真实Key"
-    echo.
-    echo        获取 Key：https://platform.deepseek.com/api_keys
+    echo         Create it with one line:
+    echo             OPENAI_API_KEY="sk-your-real-key"
+    echo         Get a key: https://platform.deepseek.com/api_keys
     echo.
     pause
     exit /b 1
 )
 
-REM --- 读取 Key：取第一个以 OPENAI_API_KEY 开头的非注释行 ---
+REM --- read the key from key.env ---
+REM  Skips comment lines (they may contain = and " characters, which would
+REM  otherwise derail the parser). Takes the first OPENAI_API_KEY line only.
 set "OPENAI_API_KEY="
 for /f "usebackq tokens=1,* delims==" %%a in ("%KEYFILE%") do (
     if not defined OPENAI_API_KEY (
-        echo %%a | findstr /b /c:"#" >nul || (
-            for /f "tokens=* delims= " %%k in ("%%a") do (
-                if /i "%%k"=="OPENAI_API_KEY" set "OPENAI_API_KEY=%%b"
-            )
-        )
+        set "K=%%a"
+        set "V=%%b"
+        if /i "!K!"=="OPENAI_API_KEY" set "OPENAI_API_KEY=!V!"
     )
 )
-REM 去掉值两侧的引号与空格
+REM strip quotes and surrounding spaces
 if defined OPENAI_API_KEY (
     set "OPENAI_API_KEY=!OPENAI_API_KEY:"=!"
     for /f "tokens=* delims= " %%v in ("!OPENAI_API_KEY!") do set "OPENAI_API_KEY=%%v"
 )
 
 if not defined OPENAI_API_KEY (
-    echo [错误] key.env 里没有解析到 OPENAI_API_KEY。
-    echo        正确格式（引号是要的，等号两边不要空格）：
-    echo            OPENAI_API_KEY="sk-xxxxxxxx"
+    echo [ERROR] Could not read OPENAI_API_KEY from key.env
+    echo.
+    echo         Correct format (keep the quotes, no spaces around =):
+    echo             OPENAI_API_KEY="sk-xxxxxxxx"
     echo.
     pause
     exit /b 1
 )
-if /i "!OPENAI_API_KEY!"=="sk-xxxx" goto :BadKey
-if /i "!OPENAI_API_KEY!"=="sk-你的真实Key" goto :BadKey
+
+REM reject obvious placeholders
 echo !OPENAI_API_KEY! | findstr /b /c:"sk-" >nul
 if errorlevel 1 goto :BadKey
+if /i "!OPENAI_API_KEY!"=="sk-xxxx" goto :BadKey
 
-echo [检查] Key 已读取：!OPENAI_API_KEY:~0,7!****!OPENAI_API_KEY:~-4!
+echo [CHECK] Key loaded: !OPENAI_API_KEY:~0,7!****!OPENAI_API_KEY:~-4!
 echo.
 
-REM --- 端口检查：占用时明确报错，绝不静默换端口 ---
-call :CheckPort %BACKEND_PORT%  "后端"
+REM --- port check: fail loudly instead of silently switching ports ---
+call :CheckPort %BACKEND_PORT%
 if errorlevel 1 goto :PortBusy
-call :CheckPort %FRONTEND_PORT% "前端"
+call :CheckPort %FRONTEND_PORT%
 if errorlevel 1 goto :PortBusy
 
-REM --- 编译后端 ---
-echo [1/3] 编译后端...
+REM --- build first, then run the exe ---
+REM  "go run" leaves the child process CWD inside the go build temp dir,
+REM  which made the telemetry file fail with "Access is denied" and the
+REM  process exited instantly (symptom: blank page after clicking start).
+echo [1/3] Building backend...
 cd /d "%ROOT%\server"
 "%GO%" build -o "%EXE%" ./cmd/server
 if errorlevel 1 (
     echo.
-    echo [错误] 后端编译失败，请把上面的报错发给开发者。
+    echo [ERROR] Backend build failed. Send the output above to the developer.
     echo.
     pause
     exit /b 1
 )
-echo       完成：%EXE%
+echo       OK: %EXE%
 echo.
 
-REM --- DeepSeek 配置 ---
-REM  LLM_THINKING=disabled 必须保留：DeepSeek 的思考型模型默认把正文写进
-REM  reasoning_content，本服务只读 content，关掉推理才有正文。
-REM  模型名会换代，若报 404 请先查 GET /models 再改这两行。
+REM --- DeepSeek settings ---
+REM  LLM_THINKING=disabled is REQUIRED. Thinking models write the answer into
+REM  reasoning_content while content stays null; this service reads content
+REM  only, so disabling thinking is what makes the text show up.
+REM  Model names change over time. If you get 404, check GET /models first.
 set "OPENAI_BASE_URL=https://api.deepseek.com"
 set "MODEL_CHEAP=deepseek-flash"
 set "MODEL_STRONG=deepseek-v4-pro"
@@ -130,69 +143,104 @@ set "PORT=%BACKEND_PORT%"
 set "TELEMETRY_FILE=%ROOT%\server\telemetry.jsonl"
 set "DECISIONS_FILE=%ROOT%\server\decisions.json"
 
-echo [2/3] 启动后端（真实模型 :%BACKEND_PORT%，会调用 API）...
+echo [2/3] Starting backend (REAL LLM :%BACKEND_PORT%)...
 start "debate-backend-real" cmd /k ""%EXE%""
 
-echo       等后端就绪...
+echo       Waiting for backend to become ready...
 set "READY="
-for /l %%i in (1,1,20) do (
+for /l %%i in (1,1,25) do (
     if not defined READY (
-        timeout /t 1 /nobreak >nul
+        call :Nap
         curl -s -o nul http://127.0.0.1:%BACKEND_PORT%/healthz && set "READY=1"
     )
 )
-if not defined READY (
+if defined READY (
+    echo       Backend is up.
+) else (
     echo.
-    echo [警告] 后端 20 秒内未就绪。请查看标题为
-    echo        "debate-backend-real" 的窗口里的报错信息。
+    echo [WARN] Backend did not respond within 25s.
+    echo        Check the window titled "debate-backend-real" for errors.
     echo.
 )
 echo.
 
-echo [3/3] 启动前端（:%FRONTEND_PORT%）...
+echo [3/3] Starting frontend (:%FRONTEND_PORT%)...
 start "debate-frontend" cmd /k "cd /d "%ROOT%\web" && npm run dev"
 
+echo       Waiting for frontend...
+set "FE_READY="
+for /l %%i in (1,1,30) do (
+    if not defined FE_READY (
+        call :Nap
+        call :CheckListening %FRONTEND_PORT%
+        if not errorlevel 1 set "FE_READY=1"
+    )
+)
+echo.
+
+if defined READY (
+    echo   [OK] Backend is LISTENING on port %BACKEND_PORT%
+) else (
+    echo   [!!] Backend is NOT listening on port %BACKEND_PORT%
+)
+if defined FE_READY (
+    echo   [OK] Frontend is LISTENING on port %FRONTEND_PORT%
+) else (
+    echo   [!!] Frontend is NOT listening on port %FRONTEND_PORT%
+)
 echo.
 echo ========================================
-echo   等约 10 秒，浏览器打开：
+echo   Open this in your browser:
 echo       http://localhost:%FRONTEND_PORT%/
 echo.
-echo   必须用 localhost，不要用 127.0.0.1
-echo   （本机 Vite 只监听 IPv6，127.0.0.1 会连不上）
+echo   Use "localhost", NOT "127.0.0.1"
+echo   (Vite here listens on IPv6 only)
 echo.
-echo   现在是真实模型，一场辩论约 ¥0.03~0.05，耗时 1~3 分钟。
-echo   两个黑窗口不要关，关掉就等于停止服务。
+echo   Real model: one debate takes 1-3 minutes, costs ~CNY 0.05.
+echo   Keep both black windows open.
 echo ========================================
 echo.
 pause
 exit /b 0
 
 :BadKey
-echo [错误] key.env 里的 OPENAI_API_KEY 还是占位符，请替换成真实 Key。
+echo [ERROR] OPENAI_API_KEY in key.env is still a placeholder.
 echo.
-echo        获取 Key：https://platform.deepseek.com/api_keys
+echo         Get a real key: https://platform.deepseek.com/api_keys
 echo.
 pause
 exit /b 1
 
 :PortBusy
 echo.
-echo [错误] 端口已被占用，无法启动。
+echo [ERROR] Port already in use. Cannot start.
 echo.
-echo   解决办法：
-echo     1. 先关闭所有标题含 "debate" 的黑窗口
-echo     2. 若仍占用，在命令行执行：
-echo          netstat -ano ^| findstr ":%BACKEND_PORT% :%FRONTEND_PORT%"
-echo        再用 taskkill /PID ^<进程号^> /F 结束它
+echo   How to fix:
+echo     1. Close all black windows whose title contains "debate"
+echo     2. If still busy, run in a terminal:
+echo          netstat -ano ^| findstr "LISTENING"
+echo        then: taskkill /PID ^<pid^> /F
 echo.
 pause
 exit /b 1
 
+REM --- helper: is %1 already LISTENING? ---
 :CheckPort
-set "BUSY="
-for /f "tokens=*" %%L in ('netstat -ano ^| findstr "LISTENING" ^| findstr ":%~1 "') do set "BUSY=1"
-if defined BUSY (
-    echo [错误] 端口 %~1（%~2）已被占用。
+call :CheckListening %1
+if not errorlevel 1 (
+    echo [ERROR] Port %1 is already in use.
     exit /b 1
 )
+exit /b 0
+
+REM --- helper: exit code 0 if %1 IS listening, 1 if not ---
+:CheckListening
+netstat -ano | findstr "LISTENING" | findstr ":%~1 " >nul 2>&1
+exit /b %errorlevel%
+
+REM --- helper: sleep ~1s ---
+REM  Uses ping, NOT "timeout /t 1": timeout aborts with
+REM  "Input redirection is not supported" when stdin is redirected.
+:Nap
+ping -n 2 127.0.0.1 >nul 2>&1
 exit /b 0
