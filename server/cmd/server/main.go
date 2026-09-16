@@ -15,6 +15,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -30,6 +31,34 @@ func env(key, def string) string {
 		return v
 	}
 	return def
+}
+
+// resolveDataPath 把数据文件路径锚定到「可执行文件所在目录」，而不是进程的当前工作目录。
+//
+// 为什么必须这样：埋点与决策档案默认用相对路径（telemetry.jsonl / decisions.json），
+// 而相对路径是相对 CWD 解析的。CWD 在不同启动方式下并不一致 ——
+// `go run` 会先把源码编译到临时目录再生效，子进程的 CWD 可能是用户的 shell 目录，
+// 也可能落在一个不可写的构建临时目录里。2026-09-16 实测：在项目根目录用
+// `cmd /k "cd /d %ROOT%\server && go run ./cmd/server"` 启动时，
+// os.OpenFile("telemetry.jsonl") 报 "Access is denied"，log.Fatalf 直接让进程秒退，
+// 前端因此表现为「点开始辩论后跳空白页」—— 排查成本极高，因为日志一闪而过。
+//
+// 绝对路径原样返回（用户显式指定时不改写意图）；相对路径则拼到 exe 目录下。
+// 用 go run 时 exe 在临时目录，此时回退到 CWD，至少行为可预期。
+func resolveDataPath(p string) string {
+	if p == "" || filepath.IsAbs(p) {
+		return p
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return p
+	}
+	dir := filepath.Dir(exe)
+	// go run 的临时目录不算「项目目录」，这种情况保持原行为，不要去拼一个随机路径。
+	if strings.Contains(dir, "go-build") || dir == os.TempDir() {
+		return p
+	}
+	return filepath.Join(dir, p)
 }
 
 // envFloat 解析浮点环境变量。留空或非法值都返回 def，
@@ -56,8 +85,8 @@ func main() {
 	// 思考型模型必须显式禁用推理输出，否则正文会写进 reasoning_content，
 	// 本服务只读 content，结果是整场辩论拿到空响应。默认禁用正是为此。
 	thinking := env("LLM_THINKING", "disabled")
-	telemetryPath := env("TELEMETRY_FILE", "telemetry.jsonl")
-	decisionsPath := env("DECISIONS_FILE", "decisions.json")
+	telemetryPath := resolveDataPath(env("TELEMETRY_FILE", "telemetry.jsonl"))
+	decisionsPath := resolveDataPath(env("DECISIONS_FILE", "decisions.json"))
 	heartbeat := 15 * time.Second
 
 	// --- 模型客户端：无 Key 用 Mock，零成本跑通 ---

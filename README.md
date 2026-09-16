@@ -11,35 +11,39 @@
 
 ## 快速开始
 
-**最简单的方式**（一键脚本，已实测可用）：
+**最简单的方式**（一键脚本，已实测可用）：**直接双击**项目根目录下的脚本，不用命令行。
 
-```bash
-# Mock 模式：零成本试玩，无需 API Key
-bash start-mock.sh
-
-# 真实模型模式：先 cp key.env.example key.env 并填入 Key
-bash start-real.sh
-```
+| 脚本 | 用途 |
+|---|---|
+| `start-mock.bat` | Mock 模式：零成本试玩，无需 API Key |
+| `start-real.bat` | 真实模型模式：需先在 `key.env` 填入 Key |
 
 然后浏览器打开 **http://localhost:5173/**
 
 > ⚠️ 必须用 `localhost` 而非 `127.0.0.1` —— 本机 Vite 只监听 IPv6 的 `[::1]`。
+>
+> ⚠️ 不要用 bash 跑（`.sh` 版本已作废删除）——本机 `bash` 会走 WSL，
+> WSL 认不出 `C:/...` 路径，后端会报 `go.exe: No such file or directory` 起不来。
 
 **手动启动**：
 
-```bash
-# 后端（Mock 模式，零成本，无需 API Key）
-cd server
-export GOROOT="C:/Users/Arina/.workbuddy/binaries/go"
-export GOPATH="$(pwd)/gopath"
-export GOCACHE="$(pwd)/gocache"
-"$GOROOT/bin/go.exe" run ./cmd/server
+```bat
+REM 后端（Mock 模式，零成本，无需 API Key）
+cd /d C:\Users\Arina\WorkBuddy\2026-09-01-12-41-31\server
+set GOROOT=C:\Users\Arina\.workbuddy\binaries\go
+set GOPATH=C:\Users\Arina\WorkBuddy\2026-09-01-12-41-31\server\gopath
+set GOCACHE=C:\Users\Arina\WorkBuddy\2026-09-01-12-41-31\server\gocache
+%GOROOT%\bin\go.exe build -o debate-server.exe ./cmd/server
+debate-server.exe
 
-# 前端
-cd web
+REM 前端
+cd /d C:\Users\Arina\WorkBuddy\2026-09-01-12-41-31\web
 npm install
 npm run dev
 ```
+
+> 用 `go build` + 直接运行 exe，而不是 `go run`：`go run` 的子进程工作目录不可控，
+> 会让埋点文件因相对路径打不开而启动失败（2026-09-16 实测踩过）。
 
 接真实模型、成本、隐私边界、排障 —— 见 **[`本地使用指南.md`](本地使用指南.md)**。
 
