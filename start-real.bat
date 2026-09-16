@@ -16,6 +16,14 @@ REM  All comments below are ASCII English on purpose. This file is UTF-8;
 REM  cmd.exe parses .bat with the system code page (GBK here), so multi-byte
 REM  UTF-8 in comments gets mangled and the leftovers run as commands.
 REM  Keep comments ASCII-only and keep echo output ASCII-only too.
+REM
+REM  ALSO: never put "(" or ")" inside echo text that sits inside an
+REM  "if (...)" / "for (...)" block. cmd.exe closes the block at the first
+REM  ")" it finds even inside echo text, and whatever is left over becomes a
+REM  stray token. One such line once produced the message
+REM      ": was unexpected at this time."
+REM  and the script died right after printing the banner. Keep echo text
+REM  inside blocks free of parentheses (or escape them as ^( and ^) ).
 REM ==========================================================
 
 set "ROOT=%~dp0"
@@ -80,6 +88,11 @@ for /f "usebackq tokens=1,* delims==" %%a in ("%KEYFILE%") do (
     if not defined OPENAI_API_KEY (
         set "K=%%a"
         set "V=%%b"
+        REM Tolerate "OPENAI_API_KEY = ..." with spaces around the equals sign.
+        REM Variable names and API keys never contain spaces, so dropping all
+        REM of them is safe and removes a whole class of user typos.
+        set "K=!K: =!"
+        set "V=!V: =!"
         if /i "!K!"=="OPENAI_API_KEY" set "OPENAI_API_KEY=!V!"
     )
 )
@@ -92,7 +105,7 @@ if defined OPENAI_API_KEY (
 if not defined OPENAI_API_KEY (
     echo [ERROR] Could not read OPENAI_API_KEY from key.env
     echo.
-    echo         Correct format (keep the quotes, no spaces around =):
+    echo         Correct format - keep the quotes, no spaces around = :
     echo             OPENAI_API_KEY="sk-xxxxxxxx"
     echo.
     pause
@@ -151,7 +164,13 @@ set "READY="
 for /l %%i in (1,1,25) do (
     if not defined READY (
         call :Nap
-        curl -s -o nul http://127.0.0.1:%BACKEND_PORT%/healthz && set "READY=1"
+        REM Readiness is checked with netstat, NOT with curl:
+        REM on this machine curl.exe exits 0 even when the port is closed
+        REM (verified: curl to port 9, nothing listening, exit code 0), so a
+        REM curl-based probe reports "backend is up" when it never started.
+        REM netstat is the only readiness signal here that actually lies not.
+        call :CheckListening %BACKEND_PORT%
+        if not errorlevel 1 set "READY=1"
     )
 )
 if defined READY (

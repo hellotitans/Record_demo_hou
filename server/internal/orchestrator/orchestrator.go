@@ -167,6 +167,19 @@ func (o *Orchestrator) Run(ctx context.Context, d debate.Dilemma, emit EmitFunc)
 
 	// --- 3. 提取关键假设，交给临界点计算器 ---
 	result.Assumptions = o.extractAssumptions(runCtx, d, history, safeEmit, usage)
+	// 同上：nil slice 会序列化成 null，前端 for...of null 直接崩成白屏。
+	// 这里守住出口，让"没有假设"表达成空数组而不是 null。
+	if result.Assumptions == nil {
+		result.Assumptions = []debate.Assumption{}
+	}
+	// 同理，turns / notes 为空时也必须是 []。notes 的元素已由
+	// ModeratorNote.MarshalJSON 保证内部字段非 null。
+	if result.Turns == nil {
+		result.Turns = []debate.Turn{}
+	}
+	if result.Notes == nil {
+		result.Notes = []debate.ModeratorNote{}
+	}
 	result.Usage = *usage
 
 	if err := safeEmit(debate.Frame{Kind: debate.FrameDone, Data: result}); err != nil {

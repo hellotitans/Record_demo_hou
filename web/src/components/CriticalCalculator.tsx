@@ -21,15 +21,18 @@ const winnerTone: Record<string, string> = {
 // 临界点计算器 UI：把辩论暴露的假设变成可拖拽的"结论翻转沙盘"。
 // 每个变量一根滑块，实时显示哪一方论证先崩、结论何时翻转。
 export function CriticalCalculator({ assumptions }: { assumptions: Assumption[] }) {
-  const groups = useMemo(() => groupByVariable(assumptions), [assumptions])
-  const [values, setValues] = useState<Record<string, number>>(() => defaultValues(assumptions))
+  // 后端已保证是数组，但跨进程 JSON 仍可能是 null（旧数据、Mock 降级等）。
+  // for...of null 会抛 TypeError 并让 React 卸载整棵树，这里兜住。
+  const list = assumptions ?? []
+  const groups = useMemo(() => groupByVariable(list), [list])
+  const [values, setValues] = useState<Record<string, number>>(() => defaultValues(list))
 
-  const result = useMemo(() => computeWinner(assumptions, values), [assumptions, values])
+  const result = useMemo(() => computeWinner(list, values), [list, values])
 
   const onSlide = (variable: string, raw: string) =>
     setValues((prev) => ({ ...prev, [variable]: Number(raw) }))
 
-  const reset = () => setValues(defaultValues(assumptions))
+  const reset = () => setValues(defaultValues(list))
 
   const winnerLabel =
     result.winner === 'tie'
@@ -51,6 +54,11 @@ export function CriticalCalculator({ assumptions }: { assumptions: Assumption[] 
       <h3 className="mt-1 text-lg font-bold text-slate-800">把假设拖成现实，看结论何时翻转</h3>
 
       <div className="mt-4 space-y-5">
+        {groups.length === 0 && (
+          <div className="rounded-2xl border border-dashed border-slate-300 px-4 py-3 text-sm text-slate-500">
+            本场没有提取出可量化的假设，计算器暂无内容可显示。
+          </div>
+        )}
         {groups.map((g) => {
           const range = groupRange(g)
           const v = values[g.variable]

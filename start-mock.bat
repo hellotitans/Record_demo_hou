@@ -101,7 +101,12 @@ set "READY="
 for /l %%i in (1,1,25) do (
     if not defined READY (
         call :Nap
-        curl -s -o nul http://127.0.0.1:%BACKEND_PORT%/healthz && set "READY=1"
+        REM Readiness is checked with netstat, NOT with curl:
+        REM on this machine curl.exe exits 0 even when the port is closed
+        REM (verified: curl to port 9, nothing listening, exit code 0), so a
+        REM curl-based probe reports "backend is up" when it never started.
+        call :CheckListening %BACKEND_PORT%
+        if not errorlevel 1 set "READY=1"
     )
 )
 if defined READY (

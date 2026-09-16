@@ -5,6 +5,7 @@
 package debate
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -222,6 +223,38 @@ type ModeratorNote struct {
 	Round      RoundNo  `json:"round"`
 	Unresolved []string `json:"unresolved"`
 	Repeated   []string `json:"repeated"`
+}
+
+// MarshalJSON 保证 unresolved / repeated 永远序列化成数组，绝不输出 null。
+//
+// 为什么必须显式做这件事：Go 的 nil slice 会被 encoding/json 序列化成 `null`，
+// 而前端 TypeScript 把这两个字段声明成 string[]，于是 `note.unresolved.length`
+// 在 null 上取值 → TypeError → React 卸载整棵组件树 → 用户看到整页白屏。
+// （2026-09-16 实测确认：Mock 模式下主持人输出不是合法 JSON，降级分支把两个字段
+// 设为 nil，三个 moderator 帧全是 `"unresolved":null`，点「开始辩论」必白屏。）
+//
+// 放在类型自己身上，而不是在每个调用点手动补 []string{}：
+// 调用点会漏，类型不会。任何构造 ModeratorNote 的路径都自动获得这个保证。
+func (n ModeratorNote) MarshalJSON() ([]byte, error) {
+	type plain ModeratorNote // 避免递归调用本方法
+	unresolved := n.Unresolved
+	if unresolved == nil {
+		unresolved = []string{}
+	}
+	repeated := n.Repeated
+	if repeated == nil {
+		repeated = []string{}
+	}
+	// 外层同名字段的 json tag 覆盖内嵌结构的，实现"只改这两个字段"。
+	return json.Marshal(struct {
+		plain
+		Unresolved []string `json:"unresolved"`
+		Repeated   []string `json:"repeated"`
+	}{
+		plain:      plain(n),
+		Unresolved: unresolved,
+		Repeated:   repeated,
+	})
 }
 
 // Assumption 是某一方论证所依赖的关键假设。

@@ -1,6 +1,10 @@
 package debate
 
-import "testing"
+import (
+	"encoding/json"
+	"strings"
+	"testing"
+)
 
 func TestDilemmaValidate(t *testing.T) {
 	valid := func() Dilemma {
@@ -122,6 +126,77 @@ func TestUsageAndResultJSONShape(t *testing.T) {
 	}
 	if r.Assumptions[0].Operator != ">=" {
 		t.Errorf("Operator = %q", r.Assumptions[0].Operator)
+	}
+}
+
+// TestModeratorNoteNeverSerializesNull 锁住一个会让前端整页白屏的 bug。
+//
+// 背景：Go 的 nil slice 序列化成 `null`，而前端把 unresolved/repeated 声明成
+// string[]。Mock 模式下主持人输出不是合法 JSON，降级分支把两个字段设为 nil，
+// SSE 里就成了 `"unresolved":null`；前端 `note.unresolved.length` 抛 TypeError，
+// React 18 卸载整棵组件树 —— 用户看到的是纯白页面，控制台之外毫无线索。
+//
+// 这个测试保证：无论字段是 nil 还是有值，序列化结果永远是数组。
+func TestModeratorNoteNeverSerializesNull(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		note ModeratorNote
+	}{
+		{name: "两个字段都是 nil（降级分支的真实形态）", note: ModeratorNote{Round: RoundOpening}},
+		{name: "只有 unresolved 为 nil", note: ModeratorNote{Round: RoundRebuttal, Repeated: []string{"某论点重复"}}},
+		{name: "只有 repeated 为 nil", note: ModeratorNote{Round: RoundConcede, Unresolved: []string{"口径不一致"}}},
+		{name: "两个字段都有值", note: ModeratorNote{Round: RoundClosing, Unresolved: []string{"a"}, Repeated: []string{"b"}}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			raw, err := json.Marshal(tt.note)
+			if err != nil {
+				t.Fatalf("序列化失败: %v", err)
+			}
+			s := string(raw)
+			if strings.Contains(s, "null") {
+				t.Fatalf("序列化结果不该出现 null: %s", s)
+			}
+			if !strings.Contains(s, `"unresolved":[]`) && !strings.Contains(s, `"unresolved":[`) {
+				t.Fatalf("unresolved 应为数组: %s", s)
+			}
+			if !strings.Contains(s, `"repeated":[]`) && !strings.Contains(s, `"repeated":[`) {
+				t.Fatalf("repeated 应为数组: %s", s)
+			}
+			// 值必须原样保留，不能为了去 null 把内容丢了
+			var back ModeratorNote
+			if err := json.Unmarshal(raw, &back); err != nil {
+				t.Fatalf("反序列化失败: %v", err)
+			}
+			if len(back.Unresolved) != len(tt.note.Unresolved) {
+				t.Fatalf("unresolved 长度变了: got %d, want %d", len(back.Unresolved), len(tt.note.Unresolved))
+			}
+			if len(back.Repeated) != len(tt.note.Repeated) {
+				t.Fatalf("repeated 长度变了: got %d, want %d", len(back.Repeated), len(tt.note.Repeated))
+			}
+			if back.Round != tt.note.Round {
+				t.Fatalf("round 变了: got %d, want %d", back.Round, tt.note.Round)
+			}
+		})
+	}
+}
+
+// TestFrameModeratorCarriesNote 验证主持人帧经 Frame 序列化后依然不是 null ——
+// 走的是真实链路（Frame.Data 是 interface{}，走的正是 MarshalJSON）。
+func TestFrameModeratorCarriesNote(t *testing.T) {
+	t.Parallel()
+
+	f := Frame{Kind: FrameModerator, Round: RoundRebuttal, Data: &ModeratorNote{Round: RoundRebuttal}}
+	raw, err := json.Marshal(f)
+	if err != nil {
+		t.Fatalf("序列化 Frame 失败: %v", err)
+	}
+	if strings.Contains(string(raw), "null") {
+		t.Fatalf("主持人帧在真实链路里仍出现 null: %s", raw)
 	}
 }
 
